@@ -1,7 +1,6 @@
 {
 module Parser where
-import Lexer  
-import SymbolTable
+import Lexer   
 import Control.Monad.State
 }
 
@@ -179,7 +178,7 @@ data PrimitiveType
   | BoolType
   | CharType
   | StringType
-  deriving Show
+  deriving (Eq, Show)
 
 
 data Clause

@@ -1,6 +1,7 @@
 module Main where
 import           Lexer              (alexScanTokens)
-import           Parser             (parse)
+import           Parser             (PrimitiveType (..), parse)
+import           SymbolTable        (verifyAST)
 
 main :: IO ()
 main = do
@@ -13,6 +14,7 @@ main = do
   printTokens tokens file
   let ast = parse tokens
   printTree ast file
+  print (verifyAST ast)
 
 printTokens :: Show a => a -> FilePath -> IO ()
 printTokens tokens file = do
