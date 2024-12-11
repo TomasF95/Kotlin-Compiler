@@ -1,33 +1,33 @@
 module Generator where
 
-import Parser (Clause (..), Argument (..), Scope (..))
+import Parser (Clause (..), Argument (..), Scope (..), PrimitiveType (..))
 import SymbolTable (SymbolTable, STI (..), find, insertEntry, setupTable)
 import Control.Monad.State
 
-data Instruction = COPY Temp Temp
+data Instruction = COPY Temp Temp PrimitiveType
            | COPYI Temp Int
            | COPYR Temp Double
            | COPYB Temp Bool
            | COPYS Temp String
-           | OP BinaryOP Temp Temp Temp
+           | OP BinaryOP Temp Temp Temp PrimitiveType
            | LABEL Label
            | JUMP Label
            | COND Temp BinaryOP Temp Label Label
-           | PRINT Temp
-           | READLN Temp
+           | PRINT Temp PrimitiveType
+           | READLN Temp 
 
 instance Show Instruction where
-    show (COPY t1 t2) = "COPY " ++ show t1 ++ " " ++ show t2
+    show (COPY t1 t2 _) = "COPY " ++ show t1 ++ " " ++ show t2
     show (COPYI t i) = "COPYI " ++ show t ++ " " ++ show i
     show (COPYR t r) = "COPYR " ++ show t ++ " " ++ show r
     show (COPYB t b) = "COPYB " ++ show t ++ " " ++ show b
     show (COPYS t s) = "COPYS " ++ show t ++ " " ++ show s
-    show (OP op t1 t2 t3) = show op ++ " " ++ show t1 ++ " " ++ show t2 ++ " " ++ show t3
     show (LABEL l) = "LABEL " ++ show l
     show (JUMP l) = "JUMP " ++ show l
-    show (COND t1 op t2 l1 l2) = "COND " ++ show t1 ++ " " ++ show op ++ " " ++ show t2 ++ " " ++ show l1 ++ " " ++ show l2
-    show (PRINT t) = "PRINT " ++ show t
+    show (PRINT t _) = "PRINT " ++ show t
     show (READLN t) = "READLN " ++ show t
+    show (COND t1 op t2 l1 l2) = "COND " ++ show t1 ++ " " ++ show op ++ " " ++ show t2 ++ " " ++ show l1 ++ " " ++ show l2
+    show (OP op t1 t2 t3 _) = show op ++ " " ++ show t1 ++ " " ++ show t2 ++ " " ++ show t3
 
 
 data BinaryOP = Addittion
@@ -36,7 +36,6 @@ data BinaryOP = Addittion
               | Division
               | Rest
               | Equal
-              | NotEqual
               | Bigger
               | Smaller
               | BiggerEqual
@@ -48,18 +47,6 @@ data UnaryOP = Negation
 type Temp = String
 type Label = String
 type Count = (Int, Int)
-
-genTable :: SymbolTable -> Scope -> State Count SymbolTable
-genTable table (Clauses []) = return table 
-genTable table (Clauses ((VarAttribution id _ _):xs)) = do
-    temp <- newTemp
-    let newTable = insertEntry id (TEMPVALUE temp) table
-    genTable newTable (Clauses xs)
-genTable table (Clauses ((ValAttribution id _ _):xs)) = do
-    temp <- newTemp
-    let newTable = insertEntry id (TEMPVALUE temp) table
-    genTable newTable (Clauses xs)
-genTable table (Clauses (_:xs)) = genTable table (Clauses xs)
 
 newTemp :: State Count Temp
 newTemp = do
@@ -97,7 +84,7 @@ translateArgument (Parser.LesserEquals arg1 arg2) table xs = condAuxliary (Parse
 translateArgument (Parser.Not arg) table xs = condAuxliary (Parser.Not arg) table xs
 translateArgument (Parser.Id id) table xs = do
     case find id table of
-        Just (TEMPVALUE temp) -> return [COPY xs temp]
+        Just (TEMPVALUE temp t) -> return [COPY xs temp t]
         Just (VARINFO _ _) -> error "wrong type"
         Nothing -> error "Variable not declared"
 
@@ -107,7 +94,8 @@ binAuxliary op arg1 arg2 table xs = do
     temp2 <- newTemp
     instr1 <- translateArgument arg1 table temp1
     instr2 <- translateArgument arg2 table temp2
-    return (instr1 ++ instr2 ++ [OP op xs temp1 temp2])
+    t <- verifyArgumentPrimitiveType arg1 table
+    return (instr1 ++ instr2 ++ [OP op xs temp1 temp2 t])
 
 condAuxliary :: Argument -> SymbolTable -> Temp -> State Count [Instruction]
 condAuxliary cond table xd = do
@@ -116,6 +104,42 @@ condAuxliary cond table xd = do
     label3 <- newLabel
     instr <- translateCondition cond table label1 label2
     return (instr ++ [LABEL label1] ++ [COPYI xd 1] ++ [JUMP label3] ++ [LABEL label2] ++ [COPYI xd 0] ++ [LABEL label3])
+
+verifyArgumentPrimitiveType :: Argument -> SymbolTable -> State Count PrimitiveType
+verifyArgumentPrimitiveType (Num _) _ = return IntegerType
+verifyArgumentPrimitiveType (Real _) _ = return FloatType
+verifyArgumentPrimitiveType (BooleanValue _) _ = return BoolType
+verifyArgumentPrimitiveType (Char _) _ = return CharType
+verifyArgumentPrimitiveType (Phrase _) _ = return StringType
+verifyArgumentPrimitiveType (Sum a1 _) table = do
+    t1 <- verifyArgumentPrimitiveType a1 table
+    return t1
+verifyArgumentPrimitiveType (Sub a1 _) table = do
+    t1 <- verifyArgumentPrimitiveType a1 table
+    return t1
+verifyArgumentPrimitiveType (Mult a1 _) table = do
+    t1 <- verifyArgumentPrimitiveType a1 table
+    return t1
+verifyArgumentPrimitiveType (Div a1 _) table = do
+    t1 <- verifyArgumentPrimitiveType a1 table
+    return t1
+verifyArgumentPrimitiveType (Modulus a1 _) table = do
+    t1 <- verifyArgumentPrimitiveType a1 table
+    return t1
+verifyArgumentPrimitiveType (And _ _) table = return BoolType
+verifyArgumentPrimitiveType (Or _ _) table = return BoolType
+verifyArgumentPrimitiveType (Not _) table = return BoolType
+verifyArgumentPrimitiveType (Equals _ _) table = return BoolType
+verifyArgumentPrimitiveType (NotEquals _ _) table = return BoolType
+verifyArgumentPrimitiveType (Lesser _ _) table = return BoolType
+verifyArgumentPrimitiveType (Greater _ _) table = return BoolType
+verifyArgumentPrimitiveType (LesserEquals _ _) table = return BoolType
+verifyArgumentPrimitiveType (GreaterEquals _ _) table = return BoolType
+verifyArgumentPrimitiveType (Id id) table = do
+    case find id table of
+        Just (TEMPVALUE _ t) -> return t
+        Just (VARINFO _ _) -> error "wrong type"
+        Nothing -> error "Variable not declared"
 
 translateCondition :: Argument -> SymbolTable -> Label -> Label -> State Count [Instruction]
 translateCondition (Parser.Lesser arg1 arg2) table l1 l2 = do 
@@ -153,7 +177,7 @@ translateCondition (Parser.NotEquals arg1 arg2) table l1 l2 = do
     temp2 <- newTemp
     instr1 <- translateArgument arg1 table temp1
     instr2 <- translateArgument arg2 table temp2
-    return (instr1 ++ instr2 ++ [COND temp1 NotEqual temp2 l1 l2])
+    return (instr1 ++ instr2 ++ [COND temp1 Equal temp2 l1 l2])
 translateCondition (Parser.And arg1 arg2) table l1 l2 = do
     label <- newLabel
     instr1 <- translateCondition arg1 table label l2
@@ -164,6 +188,7 @@ translateCondition (Parser.Or arg1 arg2) table l1 l2 = do
     instr1 <- translateCondition arg1 table l1 label
     instr2 <- translateCondition arg2 table l1 l2
     return (instr1 ++ [LABEL label] ++ instr2)
+    
 translateCondition (Not arg) table l1 l2 = translateCondition arg table l2 l1
 translateCondition (BooleanValue True) _ l1 _ = return [JUMP l1]
 translateCondition (BooleanValue False) _ _ l2 = return [JUMP l2]
@@ -171,7 +196,7 @@ translateCondition (Id id) table l1 l2 = do
     temptrue <- newTemp
     instrtrue <- translateArgument (BooleanValue True) table temptrue
     case find id table of
-        Just (TEMPVALUE temp) -> return (instrtrue ++ [COND temp Equal temptrue l1 l2])
+        Just (TEMPVALUE temp _) -> return (instrtrue ++ [COND temp Equal temptrue l1 l2])
         Just (VARINFO _ _) -> error "wrong type"
         Nothing -> error "Variable not declared"
 translateCondition _ _ _ _ = error "Invalid condition"
@@ -179,17 +204,17 @@ translateCondition _ _ _ _ = error "Invalid condition"
 translateClause :: Clause -> SymbolTable -> State Count [Instruction]
 translateClause (VarAttribution id _ arg) table = do
         case find id table of
-            Just (TEMPVALUE temp) -> return [COPY id temp]
+            Just (TEMPVALUE temp _) -> translateArgument arg table temp
             Just (VARINFO _ _) -> error "wrong type"
             Nothing -> error "Variable not declared"
 translateClause (ValAttribution id _ arg) table = do
         case find id table of
-            Just (TEMPVALUE temp) -> return [COPY id temp]
+            Just (TEMPVALUE temp _) -> translateArgument arg table temp
             Just (VARINFO _ _) -> error "wrong type"
             Nothing -> error "Variable not declared"
 translateClause (Assign id arg) table = do
         case find id table of
-            Just (TEMPVALUE xs) -> translateArgument arg table xs
+            Just (TEMPVALUE xs _) -> translateArgument arg table xs
             Just (VARINFO _ _) -> error "wrong type"
             Nothing -> error "Variable not declared"
 translateClause (IFClause cond scope) table = do
@@ -208,7 +233,8 @@ translateClause (WhileClause cond scope) table = do
 translateClause (PrintClause arg) table = do
         temp <- newTemp
         instr <- translateArgument arg table temp
-        return (instr ++ [PRINT temp])
+        t <- verifyArgumentPrimitiveType arg table
+        return (instr ++ [PRINT temp t])
 translateClause(IFEClause cond scope1 scope2) table = do
         label1 <- newLabel
         label2 <- newLabel
@@ -221,12 +247,41 @@ translateClause(IFEClause cond scope1 scope2) table = do
 translateScope :: Scope -> SymbolTable -> State Count [Instruction]
 translateScope (Clauses []) _ = return []
 translateScope (Clauses (x:xs)) table = do
-    instr1 <- translateClause x table
-    instr2 <- translateScope (Clauses xs) table
+    newTable <- genTable table (Clauses (x:xs))
+    instr1 <- translateClause x newTable
+    instr2 <- translateScope (Clauses xs) newTable
     return (instr1 ++ instr2)
 
 translateAST :: Scope -> State Count [Instruction]
 translateAST (Clauses []) = return []
 translateAST scope = do
-    symbolTable <- genTable setupTable scope
-    translateScope scope symbolTable
+    table <- genTable setupTable scope
+    translateScope scope table
+
+genTable :: SymbolTable -> Scope -> State Count SymbolTable
+genTable table (Clauses []) = return table 
+genTable table (Clauses ((VarAttribution id Integer64Type _):xs)) = do
+    temp <- newTemp
+    let table = insertEntry id (TEMPVALUE temp IntegerType) table
+    genTable table (Clauses xs)   
+genTable table (Clauses ((VarAttribution id Float64Type _):xs)) = do 
+    temp <- newTemp
+    let table = insertEntry id (TEMPVALUE temp FloatType) table
+    genTable table (Clauses xs)
+genTable table (Clauses ((VarAttribution id t _):xs)) = do
+    temp <- newTemp
+    let table = insertEntry id (TEMPVALUE temp t) table
+    genTable table (Clauses xs)
+genTable table (Clauses ((ValAttribution id Integer64Type _):xs)) = do
+    temp <- newTemp
+    let table = insertEntry id (TEMPVALUE temp IntegerType) table
+    genTable table (Clauses xs)
+genTable table (Clauses ((ValAttribution id Float64Type _):xs)) = do
+    temp <- newTemp
+    let table = insertEntry id (TEMPVALUE temp FloatType) table
+    genTable table (Clauses xs)
+genTable table (Clauses ((ValAttribution id t _):xs)) = do
+    temp <- newTemp
+    let table = insertEntry id (TEMPVALUE temp t) table
+    genTable table (Clauses xs)
+genTable table (Clauses(_:xs)) = genTable table (Clauses xs)

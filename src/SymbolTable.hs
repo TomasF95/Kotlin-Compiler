@@ -7,7 +7,7 @@ import Parser (Clause(..), PrimitiveType(..), Argument(..), Scope(..))
 
 type Temp = String
 type VALUE = Bool 
-data STI = TEMPVALUE Temp | VARINFO PrimitiveType VALUE 
+data STI = TEMPVALUE Temp PrimitiveType | VARINFO PrimitiveType VALUE 
   deriving (Show, Eq)
 type SymbolTable = Map String STI
 
@@ -19,6 +19,10 @@ createTable table (Clauses []) = table
 createTable table (Clauses ((VarAttribution id t _):xs)) = createTable (insertEntry id (VARINFO t True) table) (Clauses xs)
 createTable table (Clauses ((ValAttribution id t _):xs)) = createTable (insertEntry id (VARINFO t False) table) (Clauses xs)
 createTable table (Clauses (_:xs)) = createTable table (Clauses xs)
+createTable table (Clauses ((VarAttribution id Integer64Type _):xs)) = createTable (insertEntry id (VARINFO IntegerType True) table) (Clauses xs)
+createTable table (Clauses ((ValAttribution id Integer64Type _):xs)) = createTable (insertEntry id (VARINFO IntegerType False) table) (Clauses xs)
+createTable table (Clauses ((VarAttribution id Float64Type _):xs)) = createTable (insertEntry id (VARINFO FloatType True) table) (Clauses xs)
+createTable table (Clauses ((ValAttribution id Float64Type _):xs)) = createTable (insertEntry id (VARINFO Float64Type False) table) (Clauses xs)
 
 insertEntry :: String -> STI -> SymbolTable -> SymbolTable
 insertEntry id i table = Map.insert id i table
@@ -57,10 +61,10 @@ handleNumPrimitiveType t1 t2
 
 verifyArguments :: SymbolTable -> Argument -> PrimitiveType 
 verifyArguments _ (Num _) = IntegerType
-verifyArguments _ (Real _) = Float64Type
+verifyArguments _ (Real _) = FloatType
 verifyArguments table (Id id) = case (find id table) of
   Just (VARINFO t _) -> t
-  Just (TEMPVALUE _) -> error "Temp value in arguments"
+  Just (TEMPVALUE _ _) -> error "Temp value in arguments"
   Nothing -> error "Variable not found in arguments"
 verifyArguments _ (BooleanValue _) = BoolType
 verifyArguments _ (Char _) = CharType
@@ -132,15 +136,15 @@ verifyArguments table (GreaterEquals a1 a2) =
   in if (t1 `elem` numPrimitiveType && t2 `elem` numPrimitiveType) || (t1 == CharType && t2 == CharType) || (t1 == StringType && t2 == StringType) then BoolType else error "Invalid type in greater equals"
 
 verifyClause :: SymbolTable -> Clause -> Bool
-verifyClause table (VarAttribution id _ a) = 
+verifyClause table (VarAttribution id _ arg) = 
   case find id table of
-    Just (VARINFO t _) -> if verifyArguments table a == t then True else error "Invalid type in attribution"
-    Just (TEMPVALUE _) -> error "Temp value in attribution"
+    Just (VARINFO t _) -> if verifyArguments table arg == t then True else error "Invalid type in attribution"
+    Just (TEMPVALUE _ _) -> error "Temp value in attribution"
     Nothing -> error "Variable not found in attribution"
 verifyClause table (ValAttribution id _ a) =
   case find id table of
     Just (VARINFO t _) -> if verifyArguments table a == t then True else error "Invalid type in attribution"
-    Just (TEMPVALUE _) -> error "Temp value in attribution"
+    Just (TEMPVALUE _ _) -> error "Temp value in attribution"
     Nothing -> error "Variable not found in attribution"
 verifyClause table (IFClause a scope) = 
   let t = verifyArguments table a
@@ -158,7 +162,7 @@ verifyClause table (WhileClause a scope) =
 verifyClause table (Assign id a) =
   case find id table of
     Just (VARINFO t canAssign) -> if not canAssign then error "Cannot assign to a constant" else if verifyArguments table a == t then True else error "Invalid type in assignment"
-    Just (TEMPVALUE _) -> error "Temp value in assignment"
+    Just (TEMPVALUE _ _) -> error "Temp value in assignment"
     Nothing -> error "Variable not found in assignment"
 verifyClause _ (PrintClause _) = True
 

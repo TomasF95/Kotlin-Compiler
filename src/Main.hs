@@ -2,6 +2,10 @@ module Main where
 import           Lexer              (alexScanTokens)
 import           Parser             (PrimitiveType (..), parse)
 import           SymbolTable        (verifyAST)
+import           System.Environment (getArgs)
+import           Generator          (translateAST)
+import           Control.Monad.State(runState)
+import           Assembler           
 
 main :: IO ()
 main = do
@@ -15,6 +19,8 @@ main = do
   let ast = parse tokens
   printTree ast file
   print (verifyAST ast)
+  let (lc, _) = runState (translateAST ast) (0,0)
+  appendFile file (assemble lc []) 
 
 printTokens :: Show a => a -> FilePath -> IO ()
 printTokens tokens file = do
