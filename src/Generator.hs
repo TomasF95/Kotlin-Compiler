@@ -1,144 +1,232 @@
-import Control.Monad.Statement
-import Parser(Clause(..), Argument(..), PrimitiveType(..), Scope(..))
+module Generator where
 
-data Instruction = COPY Register Register
-                 | COPYI Register Integer
-                 | COPYR Register Double
-                 | COPYB Register Bool
-                 | COPYS Register String
-                 | BINARY BinOperator Register Register Register
-                 | MARK LabelName
-                 | GOTO LabelName
-                 | IFCOND Register BinOperator Register LabelName LabelName
-                 | UNARY UnOperator Register Register
-                 | IFUNARY Register LabelName LabelName
-                 | DISPLAY Register
-                 deriving Show
+import Parser (Clause (..), Argument (..), Scope (..))
+import SymbolTable (SymbolTable, STI (..), find, insertEntry, setupTable)
+import Control.Monad.State
 
-data BinOperator = Sum | Sub | Mult | Div | Modulus | Lesser | LesserEquals | Equals | NotEquals | And| Or
-                 deriving Show
+data Instruction = COPY Temp Temp
+           | COPYI Temp Int
+           | COPYR Temp Double
+           | COPYB Temp Bool
+           | COPYS Temp String
+           | OP BinaryOP Temp Temp Temp
+           | LABEL Label
+           | JUMP Label
+           | COND Temp BinaryOP Temp Label Label
+           | PRINT Temp
+           | READLN Temp
 
-data UnOperator = Not
-                deriving Show
+instance Show Instruction where
+    show (COPY t1 t2) = "COPY " ++ show t1 ++ " " ++ show t2
+    show (COPYI t i) = "COPYI " ++ show t ++ " " ++ show i
+    show (COPYR t r) = "COPYR " ++ show t ++ " " ++ show r
+    show (COPYB t b) = "COPYB " ++ show t ++ " " ++ show b
+    show (COPYS t s) = "COPYS " ++ show t ++ " " ++ show s
+    show (OP op t1 t2 t3) = show op ++ " " ++ show t1 ++ " " ++ show t2 ++ " " ++ show t3
+    show (LABEL l) = "LABEL " ++ show l
+    show (JUMP l) = "JUMP " ++ show l
+    show (COND t1 op t2 l1 l2) = "COND " ++ show t1 ++ " " ++ show op ++ " " ++ show t2 ++ " " ++ show l1 ++ " " ++ show l2
+    show (PRINT t) = "PRINT " ++ show t
+    show (READLN t) = "READLN " ++ show t
 
-type Register = String
-type LabelName = String
 
+data BinaryOP = Addittion
+              | Subtraction
+              | Multiplication
+              | Division
+              | Rest
+              | Equal
+              | NotEqual
+              | Bigger
+              | Smaller
+              | BiggerEqual
+              | SmallerEqual
+            deriving Show
+data UnaryOP = Negation
+            deriving Show
+
+type Temp = String
+type Label = String
 type Count = (Int, Int)
 
-newRegister :: State Count Register
-newRegister = do
-    (registers, labels) <- get
-    put (registers + 1, labels)
-    return ("r" ++ show registers)
+genTable :: SymbolTable -> Scope -> State Count SymbolTable
+genTable table (Clauses []) = return table 
+genTable table (Clauses ((VarAttribution id _ _):xs)) = do
+    temp <- newTemp
+    let newTable = insertEntry id (TEMPVALUE temp) table
+    genTable newTable (Clauses xs)
+genTable table (Clauses ((ValAttribution id _ _):xs)) = do
+    temp <- newTemp
+    let newTable = insertEntry id (TEMPVALUE temp) table
+    genTable newTable (Clauses xs)
+genTable table (Clauses (_:xs)) = genTable table (Clauses xs)
 
-newLabel :: State Count LabelName
-newLabel = do
-    (registers, labels) <- get
-    put (registers, labels + 1)
-    return ("L" ++ show labels)
+newTemp :: State Count Temp
+newTemp = do
+    (temp, label) <- get
+    put (temp + 1, label)
+    return ("t" ++ show temp)
 
-translateArgument :: Argument -> SymbolTable -> Register -> State Count [Instruction]
+newLabel :: State Count Label
+newLabel = do 
+    (temp, label) <- get
+    put (temp, label + 1)
+    return ("L" ++ show label)
+
+translateArgument :: Argument -> SymbolTable -> Temp -> State Count [Instruction]
 translateArgument (Num x) _ xs = return [COPYI xs x]
 translateArgument (Real x) _ xs = return [COPYR xs x]
-translateArgument (BooleanValue x) _ xs = return [COPYB xs x]
+translateArgument (BooleanValue True) _ xs = return [COPYI xs 0]
+translateArgument (BooleanValue False) _ xs = return [COPYI xs 1]
 translateArgument (Char x) _ xs = return [COPYS xs x]
 translateArgument (Phrase x) _ xs = return [COPYS xs x]
-translateArgument (Id x) context xs = do
-    let Just t = find x context
-    return [COPY xs t]
-translateArgument (Sum x y) context xs = translateBinOperator Sum x y context xs
-translateArgument (Sub x y) context xs = translateBinOperator Sub x y context xs
-translateArgument (Mult x y) context xs = translateBinOperator Mult x y context xs
-translateArgument (Div x y) context xs = translateBinOperator Div x y context xs
-translateArgument (Modulus x y) context xs = translateBinOperator Modulus x y context xs
-translateArgument (And x y) context xs = translateBinOperator And x y context xs
-translateArgument (Or x y) context xs = translateBinOperator Or x y context xs
-translateArgument (Not x) context xs = do
-    typ1 -> newRegister
-    instr1 <- translateArgument x context typ1
-    return instr1 ++ [BINARY op xs typ1]
-translateArgument (Equals x y) context xs = translateBinOperator Equals x y context xs
-translateArgument (NotEquals x y) context xs = translateBinOperator NotEquals x y context xs
-translateArgument (Lesser x y) context xs = translateBinOperator Lesser x y context xs
-translateArgument (LesserEquals x y) context xs = translateBinOperator LesserEquals x y context xs
-translateArgument (Greater x y) context xs = translateBinOperator Greater x y context xs
-translateArgument (GreaterEquals x y) context xs = translateBinOperator GreaterEquals x y context xs
+translateArgument (ReadClause) _ xs = return [READLN xs]
+translateArgument (Parser.Sum arg1 arg2) table xs = binAuxliary Addittion arg1 arg2 table xs 
+translateArgument (Parser.Sub arg1 arg2) table xs = binAuxliary Subtraction arg1 arg2 table xs 
+translateArgument (Parser.Mult arg1 arg2) table xs = binAuxliary Multiplication arg1 arg2 table xs 
+translateArgument (Parser.Div arg1 arg2) table xs = binAuxliary Division arg1 arg2 table xs 
+translateArgument (Parser.Modulus arg1 arg2) table xs = binAuxliary Rest arg1 arg2 table xs 
+translateArgument (Parser.And arg1 arg2) table xs = condAuxliary (Parser.And arg1 arg2) table xs 
+translateArgument (Parser.Or arg1 arg2) table xs = condAuxliary (Parser.Or arg1 arg2) table xs
+translateArgument (Parser.Equals arg1 arg2) table xs = condAuxliary (Parser.Equals arg1 arg2) table xs
+translateArgument (Parser.NotEquals arg1 arg2) table xs = condAuxliary (Parser.NotEquals arg1 arg2) table xs
+translateArgument (Parser.Greater arg1 arg2) table xs = condAuxliary (Parser.Greater arg1 arg2) table xs
+translateArgument (Parser.Lesser arg1 arg2) table xs = condAuxliary (Parser.Lesser arg1 arg2) table xs
+translateArgument (Parser.GreaterEquals arg1 arg2) table xs = condAuxliary (Parser.GreaterEquals arg1 arg2) table xs
+translateArgument (Parser.LesserEquals arg1 arg2) table xs = condAuxliary (Parser.LesserEquals arg1 arg2) table xs
+translateArgument (Parser.Not arg) table xs = condAuxliary (Parser.Not arg) table xs
+translateArgument (Parser.Id id) table xs = do
+    case find id table of
+        Just (TEMPVALUE temp) -> return [COPY xs temp]
+        Just (VARINFO _ _) -> error "wrong type"
+        Nothing -> error "Variable not declared"
 
-translateBinOperator :: BinOperator -> Argument -> Argument -> SymbolTable -> Register -> State Count [Instruction]
-translateBinOperator op x y context xs = do
-    typ1 <- newRegister
-    typ2 <- newRegister
-    instr1 <- translateArgument x context typ1
-    instr2 <- translateArgument y context typ2
-    return (instr1 ++ instr2 ++ [BINARY op xs typ1 typ2])
+binAuxliary :: BinaryOP -> Argument -> Argument -> SymbolTable -> Temp -> State Count [Instruction]
+binAuxliary op arg1 arg2 table xs = do
+    temp1 <- newTemp
+    temp2 <- newTemp
+    instr1 <- translateArgument arg1 table temp1
+    instr2 <- translateArgument arg2 table temp2
+    return (instr1 ++ instr2 ++ [OP op xs temp1 temp2])
 
+condAuxliary :: Argument -> SymbolTable -> Temp -> State Count [Instruction]
+condAuxliary cond table xd = do
+    label1 <- newLabel
+    label2 <- newLabel
+    label3 <- newLabel
+    instr <- translateCondition cond table label1 label2
+    return (instr ++ [LABEL label1] ++ [COPYI xd 1] ++ [JUMP label3] ++ [LABEL label2] ++ [COPYI xd 0] ++ [LABEL label3])
 
-
-translateBinaryCondition :: BinOperator -> Argument -> Argument -> SymbolTable -> LabelName -> LabelName -> State Count [Instruction]
-translateBinaryCondition op x y context trueLabel falseLabel = do
-    typ1 <- newRegister
-    typ2 <- newRegister
-    instr1 <- translateArgument x context typ1
-    instr2 <- translateArgument y context typ2
-    return (instr1 ++ instr2 ++ [IFCOND typ1 op typ2 trueLabel falseLabel])
-
-translateCondition :: Argument -> SymbolTable -> LabelName -> LabelName -> State Count [Instruction]
-translateCondition (And x y) context trueLabel falseLabel = translateBinaryCondition And x y context trueLabel falseLabel
-translateCondition (Or x y) context trueLabel falseLabel = translateBinaryCondition Or x y context trueLabel falseLabel
-translateCondition (Not x) context trueLabel falseLabel = do
-    typ1 <- newRegister
-    instruction <- translateArgument x context typ1
-    return (instruction ++ [IFUNARY typ1 trueLabel falseLabel])
-translateCondition (Equals x y) context trueLabel falseLabel = translateBinaryCondition Equals x y context trueLabel falseLabel
-translateCondition (Lesser x y) context trueLabel falseLabel = translateBinaryCondition Lesser x y context trueLabel falseLabel
-translateCondition (LesserEquals x y) context trueLabel falseLabel = translateBinaryCondition LesserEquals x y context trueLabel falseLabel
-translateCondition (Greater x y) context trueLabel falseLabel = translateBinaryCondition Greater x y context trueLabel falseLabel
-translateCondition (GreaterEquals x y) context trueLabel falseLabel = translateBinaryCondition GreaterEquals x y context trueLabel falseLabel
-translateCondition (NotEquals x y) context trueLabel falseLabel = translateBinaryCondition NotEquals x y context trueLabel falseLabel
-translateCondition ( Id id) context trueLabel falseLabel = do
-    let Just t = find id context
-    return [IFUNARY t trueLabel falseLabel]
-
-translateScope :: [Clause] -> SymbolTable -> State Count [Instruction]
-translateScope [] _ = return []
-translateScope (x:xs) context = do
-    instr1 <- translateClause x context
-    instr2 <- translateScope xs context
-    return (instr1 ++ instr2)
+translateCondition :: Argument -> SymbolTable -> Label -> Label -> State Count [Instruction]
+translateCondition (Parser.Lesser arg1 arg2) table l1 l2 = do 
+    temp1 <- newTemp
+    temp2 <- newTemp
+    instr1 <- translateArgument arg1 table temp1
+    instr2 <- translateArgument arg2 table temp2
+    return (instr1 ++ instr2 ++ [COND temp1 Smaller temp2 l1 l2])
+translateCondition (Parser.Greater arg1 arg2) table l1 l2 = do
+    temp1 <- newTemp
+    temp2 <- newTemp
+    instr1 <- translateArgument arg1 table temp1
+    instr2 <- translateArgument arg2 table temp2
+    return (instr1 ++ instr2 ++ [COND temp1 Bigger temp2 l1 l2])
+translateCondition (Parser.LesserEquals arg1 arg2) table l1 l2 = do
+    temp1 <- newTemp
+    temp2 <- newTemp
+    instr1 <- translateArgument arg1 table temp1
+    instr2 <- translateArgument arg2 table temp2
+    return (instr1 ++ instr2 ++ [COND temp1 SmallerEqual temp2 l1 l2])
+translateCondition (Parser.GreaterEquals arg1 arg2) table l1 l2 = do
+    temp1 <- newTemp
+    temp2 <- newTemp
+    instr1 <- translateArgument arg1 table temp1
+    instr2 <- translateArgument arg2 table temp2
+    return (instr1 ++ instr2 ++ [COND temp1 BiggerEqual temp2 l1 l2])
+translateCondition (Parser.Equals arg1 arg2) table l1 l2 = do
+    temp1 <- newTemp
+    temp2 <- newTemp
+    instr1 <- translateArgument arg1 table temp1
+    instr2 <- translateArgument arg2 table temp2
+    return (instr1 ++ instr2 ++ [COND temp1 Equal temp2 l1 l2])
+translateCondition (Parser.NotEquals arg1 arg2) table l1 l2 = do
+    temp1 <- newTemp
+    temp2 <- newTemp
+    instr1 <- translateArgument arg1 table temp1
+    instr2 <- translateArgument arg2 table temp2
+    return (instr1 ++ instr2 ++ [COND temp1 NotEqual temp2 l1 l2])
+translateCondition (Parser.And arg1 arg2) table l1 l2 = do
+    label <- newLabel
+    instr1 <- translateCondition arg1 table label l2
+    instr2 <- translateCondition arg2 table l1 l2
+    return (instr1 ++ [LABEL label] ++ instr2)
+translateCondition (Parser.Or arg1 arg2) table l1 l2 = do
+    label <- newLabel
+    instr1 <- translateCondition arg1 table l1 label
+    instr2 <- translateCondition arg2 table l1 l2
+    return (instr1 ++ [LABEL label] ++ instr2)
+translateCondition (Not arg) table l1 l2 = translateCondition arg table l2 l1
+translateCondition (BooleanValue True) _ l1 _ = return [JUMP l1]
+translateCondition (BooleanValue False) _ _ l2 = return [JUMP l2]
+translateCondition (Id id) table l1 l2 = do
+    temptrue <- newTemp
+    instrtrue <- translateArgument (BooleanValue True) table temptrue
+    case find id table of
+        Just (TEMPVALUE temp) -> return (instrtrue ++ [COND temp Equal temptrue l1 l2])
+        Just (VARINFO _ _) -> error "wrong type"
+        Nothing -> error "Variable not declared"
+translateCondition _ _ _ _ = error "Invalid condition"
 
 translateClause :: Clause -> SymbolTable -> State Count [Instruction]
-translateClause (ValAttribution id _ arg) context = do
-    let Just t = find id context
-    translateArgument arg context t
-translateClause (VarAttribution id _ arg) context = do
-    let Just t = find id context
-    translateArgument arg context t
-translateClause (WhileClause condition scope) context = do
-    startLabel <- newLabel
-    falseLabel <- newLabel
-    finalLabel <- newLabel
-    instr1 <- translateCondition condition context trueLabel finalLabel
-    instr2 <- translateScope scope context
-    return ([MARK trueLabel] ++ instr2 ++ instr1 ++ [GOTO trueLabel] ++ [MARK falseLabel])
-translateClause (IFClause condition scope) context = do
-    trueLabel <- newLabel
-    falseLabel <- newLabel
-    instr1 <- translateCondition condition context trueLabel falseLabel
-    instr2 <- translateScope scope context
-    return (instr1 ++ [MARK trueLabel] ++ instr2 ++ [MARK falseLabel])
-translateClause (IFEClause condition scope1 scope2) context = do
-    trueLabel <- newLabel
-    falseLabel <- newLabel
-    finallabel <- newLabel
-    instr1 <- translateCondition condition context trueLabel falseLabel
-    instr2 <- translateScope scope1 context
-    instr3 <- translateScope scope2 context
-    return (instr1 ++ [MARK trueLabel] ++ instr2 ++ [GOTO finalLabel] ++ [MARK falseLabel] ++ instr3 ++ [MARK finalLabel])
-translateClause (PrintClause arg) context = do
-    typ1 <- newRegister
-    instr1 <- translateArgument arg context typ1
-    return (instr1 ++ [DISPLAY typ1])
-translateClause (Assign id arg) context = do
-    let Just t = find id context
-    translateArgument arg context t
+translateClause (VarAttribution id _ arg) table = do
+        case find id table of
+            Just (TEMPVALUE temp) -> return [COPY id temp]
+            Just (VARINFO _ _) -> error "wrong type"
+            Nothing -> error "Variable not declared"
+translateClause (ValAttribution id _ arg) table = do
+        case find id table of
+            Just (TEMPVALUE temp) -> return [COPY id temp]
+            Just (VARINFO _ _) -> error "wrong type"
+            Nothing -> error "Variable not declared"
+translateClause (Assign id arg) table = do
+        case find id table of
+            Just (TEMPVALUE xs) -> translateArgument arg table xs
+            Just (VARINFO _ _) -> error "wrong type"
+            Nothing -> error "Variable not declared"
+translateClause (IFClause cond scope) table = do
+        label1 <- newLabel
+        label2 <- newLabel
+        instr1 <- translateCondition cond table label1 label2
+        instr2 <- translateScope scope table
+        return (instr1 ++ [LABEL label1] ++ instr2 ++ [LABEL label2])
+translateClause (WhileClause cond scope) table = do
+        label1 <- newLabel
+        label2 <- newLabel
+        label3 <- newLabel
+        instr1 <- translateCondition cond table label2 label3
+        instr2 <- translateScope scope table
+        return ([LABEL label1] ++ instr1 ++ [LABEL label2] ++ instr2 ++ [JUMP label1] ++ [LABEL label3])
+translateClause (PrintClause arg) table = do
+        temp <- newTemp
+        instr <- translateArgument arg table temp
+        return (instr ++ [PRINT temp])
+translateClause(IFEClause cond scope1 scope2) table = do
+        label1 <- newLabel
+        label2 <- newLabel
+        label3 <- newLabel
+        instr1 <- translateCondition cond table label1 label2
+        instr2 <- translateScope scope1 table
+        instr3 <- translateScope scope2 table
+        return (instr1 ++ [LABEL label1] ++ instr2 ++ [JUMP label3] ++ [LABEL label2] ++ instr3 ++ [LABEL label3])
+
+translateScope :: Scope -> SymbolTable -> State Count [Instruction]
+translateScope (Clauses []) _ = return []
+translateScope (Clauses (x:xs)) table = do
+    instr1 <- translateClause x table
+    instr2 <- translateScope (Clauses xs) table
+    return (instr1 ++ instr2)
+
+translateAST :: Scope -> State Count [Instruction]
+translateAST (Clauses []) = return []
+translateAST scope = do
+    symbolTable <- genTable setupTable scope
+    translateScope scope symbolTable
